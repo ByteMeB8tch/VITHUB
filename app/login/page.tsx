@@ -26,7 +26,76 @@ export default function LoginPage() {
     password: "",
   })
   const [captchaSessionId, setCaptchaSessionId] = useState<string | null>(null)
-  const [captchaSolution, setCaptchaSolution] = useState("")
+  const [captchaImageUrl, setCaptchaImageUrl] = useState<string | null>(null)
+  const [isAutoSolving, setIsAutoSolving] = useState(false)
+
+  // Auto-solve CAPTCHA using OCR when it appears
+  useEffect(() => {
+    const autoSolveCaptcha = async () => {
+      if (!captchaSessionId || !captchaImageUrl || isAutoSolving) {
+        return
+      }
+
+      setIsAutoSolving(true)
+      setError("")
+
+      try {
+        console.log("🤖 Starting automatic CAPTCHA solving with OCR...")
+        
+        const ocrResponse = await fetch("/api/vit-captcha-ocr", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: captchaSessionId,
+            captchaImageUrl: captchaImageUrl,
+          }),
+        })
+
+        if (!ocrResponse.ok) {
+          const errorData = await ocrResponse.json()
+          console.warn("OCR solving failed:", errorData.error)
+          setError(`CAPTCHA auto-solve failed. Please enter manually. Error: ${errorData.error || 'Unknown'}`)
+          setIsAutoSolving(false)
+          return
+        }
+
+        const { data: vitData } = await ocrResponse.json()
+        console.log("✅ CAPTCHA solved with OCR:", vitData)
+        setSuccess("CAPTCHA solved automatically! Logging in...")
+
+        // Now try to login with VIT data
+        const email = vitData.email || `${loginData.registrationNo}@vitstudent.ac.in`
+
+        try {
+          await authService.login(email, loginData.password)
+          console.log("Existing account found, logged in...")
+        } catch (loginError: any) {
+          console.log("Creating new account with VIT data...")
+          await authService.createAccountWithVIT(
+            loginData.registrationNo,
+            loginData.password,
+            loginData.password,
+            vitData.name
+          )
+        }
+
+        setSuccess("Login successful! Redirecting...")
+        setCaptchaSessionId(null)
+        setCaptchaImageUrl(null)
+
+        await new Promise(resolve => setTimeout(resolve, 500))
+        window.location.href = "/dashboard"
+      } catch (err: any) {
+        console.error("❌ Automatic CAPTCHA solving failed:", err)
+        setError(`Could not solve CAPTCHA automatically. Please try manual entry. Error: ${err.message || "Unknown"}`)
+        setIsAutoSolving(false)
+      }
+    }
+
+    // Trigger OCR solver after a short delay to ensure image is loaded
+    const timer = setTimeout(autoSolveCaptcha, 1500)
+    return () => clearTimeout(timer)
+  }, [captchaSessionId, captchaImageUrl, isAutoSolving, loginData.registrationNo, loginData.password])
 
   // Redirect if already logged in
   useEffect(() => {
@@ -45,67 +114,6 @@ export default function LoginPage() {
 
   if (user) {
     return null // Will redirect
-  }
-
-  const handleCaptchaSolve = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!captchaSessionId || !captchaSolution.trim()) {
-      setError("Please enter the CAPTCHA solution")
-      return
-    }
-
-    setError("")
-    setIsLoading(true)
-
-    try {
-      console.log("Submitting CAPTCHA solution...")
-
-      const captchaResponse = await fetch("/api/vit-captcha", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: captchaSessionId,
-          captchaSolution: captchaSolution,
-        }),
-      })
-
-      if (!captchaResponse.ok) {
-        const errorData = await captchaResponse.json()
-        throw new Error(errorData.error || "CAPTCHA verification failed")
-      }
-
-      const { data: vitData } = await captchaResponse.json()
-      console.log("CAPTCHA solved successfully:", vitData)
-      setSuccess("CAPTCHA verified! Logging in...")
-
-      // Now try to login with VIT data
-      const email = vitData.email || `${loginData.registrationNo}@vitstudent.ac.in`
-
-      try {
-        await authService.login(email, loginData.password)
-        console.log("Existing account found, logged in...")
-      } catch (loginError: any) {
-        console.log("Creating new account with VIT data...")
-        await authService.createAccountWithVIT(
-          loginData.registrationNo,
-          loginData.password,
-          loginData.password,
-          vitData.name
-        )
-      }
-
-      setSuccess("Login successful! Redirecting...")
-      setCaptchaSessionId(null)
-      setCaptchaSolution("")
-
-      await new Promise(resolve => setTimeout(resolve, 500))
-      window.location.href = "/dashboard"
-    } catch (err: any) {
-      console.error("CAPTCHA error:", err)
-      setError(err.message || "CAPTCHA verification failed. Try again.")
-    } finally {
-      setIsLoading(false)
-    }
   }
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -138,7 +146,16 @@ export default function LoginPage() {
       // Check if CAPTCHA is required
       if (vitData.requiresCaptcha) {
         console.log("CAPTCHA required")
+        console.log("CAPTCHA session ID:", vitData.sessionId)
+        console.log("CAPTCHA image URL:", vitData.captchaImageUrl?.substring(0, 100) + "...")
         setCaptchaSessionId(vitData.sessionId)
+        if (vitData.captchaImageUrl) {
+          console.log("Setting CAPTCHA image URL")
+          setCaptchaImageUrl(vitData.captchaImageUrl)
+        } else {
+          console.warn("No CAPTCHA image URL in response")
+          setError("CAPTCHA image could not be extracted. Please refresh and try again.")
+        }
         setSuccess("CAPTCHA required. Please solve it below.")
         setIsLoading(false)
         return
@@ -212,55 +229,112 @@ export default function LoginPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleLogin} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="reg-no">Registration Number</Label>
-                <Input
-                  id="reg-no"
-                  type="text"
-                  placeholder="21BCE1234"
-                  value={loginData.registrationNo}
-                  onChange={(e) => setLoginData({ ...loginData, registrationNo: e.target.value })}
-                  required
-                  disabled={isLoading}
-                  autoComplete="username"
-                />
-              </div>
+              {!captchaSessionId && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-no">Registration Number</Label>
+                    <Input
+                      id="reg-no"
+                      type="text"
+                      placeholder="21BCE1234"
+                      value={loginData.registrationNo}
+                      onChange={(e) => setLoginData({ ...loginData, registrationNo: e.target.value })}
+                      required
+                      disabled={isLoading}
+                      autoComplete="username"
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="password">VIT Portal Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your VIT password"
-                    value={loginData.password}
-                    onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
-                    required
-                    disabled={isLoading}
-                    autoComplete="current-password"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-0 top-0 h-full px-3"
-                    onClick={() => setShowPassword(!showPassword)}
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">VIT Portal Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter your VIT password"
+                        value={loginData.password}
+                        onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
+                        required
+                        disabled={isLoading}
+                        autoComplete="current-password"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3"
+                        onClick={() => setShowPassword(!showPassword)}
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <Link 
+                      href="https://vtop.vit.ac.in/vtop/forgotPassword" 
+                      target="_blank" 
+                      className="text-primary hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
+                </>
+              )}
+
+              {captchaSessionId && (
+                <div className="space-y-4 pt-4">
+                  <h3 className="text-sm font-semibold">🔒 CAPTCHA Verification Required</h3>
+                  <p className="text-xs text-muted-foreground">
+                    The VIT portal requires CAPTCHA verification. Please enter the CAPTCHA solution below.
+                  </p>
+
+                  {captchaImageUrl ? (
+                    <div className="space-y-2">
+                      <Label>CAPTCHA Image</Label>
+                      <div className="border-2 border-dashed rounded-lg p-4 bg-muted flex items-center justify-center min-h-[140px] overflow-auto">
+                        <img 
+                          src={captchaImageUrl} 
+                          alt="CAPTCHA from VIT Portal" 
+                          className="max-w-full max-h-[120px] object-contain"
+                          crossOrigin="anonymous"
+                          loading="eager"
+                          onLoad={() => {
+                            console.log("CAPTCHA image loaded successfully")
+                          }}
+                          onError={(e) => {
+                            console.error("Failed to load CAPTCHA image:", e)
+                            console.error("Image URL:", captchaImageUrl?.substring(0, 100))
+                            setError("Could not load CAPTCHA image. The URL may be invalid. Please refresh and try again.")
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground text-center">
+                        CAPTCHA image from VIT Portal
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border-2 border-dashed rounded-lg p-4 bg-muted flex items-center justify-center min-h-[140px]">
+                      <div className="text-center">
+                        <p className="text-sm font-medium text-muted-foreground mb-2">CAPTCHA Image</p>
+                        <p className="text-xs text-muted-foreground">
+                          Could not load CAPTCHA image from VIT portal.
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Please try logging in again.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-2 text-center">
+                    <p className="text-xs text-muted-foreground">
+                      🤖 Auto-solving CAPTCHA in progress...
+                    </p>
+                  </div>
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <Link 
-                  href="https://vtop.vit.ac.in/vtop/forgotPassword" 
-                  target="_blank" 
-                  className="text-primary hover:underline"
-                >
-                  Forgot password?
-                </Link>
-              </div>
+              )}
 
               {error && (
                 <Alert variant="destructive">
@@ -274,7 +348,7 @@ export default function LoginPage() {
                 </Alert>
               )}
 
-              <Button type="submit" className="w-full" disabled={isLoading}>
+              <Button type="submit" className="w-full" disabled={isLoading || isAutoSolving}>
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -285,56 +359,23 @@ export default function LoginPage() {
                 )}
               </Button>
 
-              {captchaSessionId && (
-                <div className="mt-6 pt-6 border-t">
-                  <h3 className="text-sm font-semibold mb-4">🔒 CAPTCHA Verification Required</h3>
-                  <p className="text-xs text-muted-foreground mb-4">
-                    The VIT portal requires CAPTCHA verification. Please enter the CAPTCHA solution below.
-                  </p>
-                  <form onSubmit={handleCaptchaSolve} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="captcha-solution">CAPTCHA Solution</Label>
-                      <Input
-                        id="captcha-solution"
-                        type="text"
-                        placeholder="Enter the CAPTCHA text"
-                        value={captchaSolution}
-                        onChange={(e) => setCaptchaSolution(e.target.value)}
-                        disabled={isLoading}
-                        autoComplete="off"
-                      />
+              {!captchaSessionId && (
+                <>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
                     </div>
-                    <Button 
-                      type="submit" 
-                      className="w-full" 
-                      disabled={isLoading || !captchaSolution.trim()}
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Verifying...
-                        </>
-                      ) : (
-                        "Verify CAPTCHA"
-                      )}
-                    </Button>
-                  </form>
-                </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-background px-2 text-muted-foreground">First time here?</span>
+                    </div>
+                  </div>
+
+                  <div className="text-center text-sm text-muted-foreground space-y-2">
+                    <p>Simply login with your VIT credentials</p>
+                    <p className="text-xs">Your account will be created automatically on first login</p>
+                  </div>
+                </>
               )}
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-background px-2 text-muted-foreground">First time here?</span>
-                </div>
-              </div>
-
-              <div className="text-center text-sm text-muted-foreground space-y-2">
-                <p>Simply login with your VIT credentials</p>
-                <p className="text-xs">Your account will be created automatically on first login</p>
-              </div>
             </form>
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
