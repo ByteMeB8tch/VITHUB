@@ -131,20 +131,41 @@ export default function Dashboard() {
 
   // Use real data if available, otherwise show placeholders
   const userName = studentData.name || "User"
-  const userRegNo = studentData.regNo || ""
+  const userRegNo = studentData.registrationNo || studentData.regNo || ""
   const userEmail = studentData.email || ""
+  const userBranch = studentData.branch || ""
+  const userSemester = studentData.semester || ""
+  const userCGPA = studentData.cgpa || null
+  const userCredits = studentData.credits || null
+  const userAttendance = studentData.attendance || null
+  const userCourses = studentData.courses || []
 
   // Stats from real VTOP data
-  const stats = realTimeData ? [
-    { icon: Calendar, label: "Today's Classes", value: realTimeData.todayClasses || "0", color: "text-blue-400" },
-    { icon: Bell, label: "New Announcements", value: realTimeData.newAnnouncements || "0", color: "text-cyan-400" },
-    { icon: FileText, label: "Assignments Due", value: realTimeData.pendingAssignments || "0", color: "text-amber-400" },
-    { icon: AlertCircle, label: "Attendance %", value: realTimeData.attendance || "N/A", color: "text-red-400" },
-  ] : [
-    { icon: Calendar, label: "Today's Classes", value: "--", color: "text-blue-400" },
-    { icon: Bell, label: "New Announcements", value: "--", color: "text-cyan-400" },
-    { icon: FileText, label: "Assignments Due", value: "--", color: "text-amber-400" },
-    { icon: AlertCircle, label: "Attendance %", value: "--", color: "text-red-400" },
+  const stats = [
+    { 
+      icon: AlertCircle, 
+      label: "Overall Attendance", 
+      value: userAttendance ? `${userAttendance}%` : "--", 
+      color: userAttendance && userAttendance < 75 ? "text-red-400" : "text-green-400" 
+    },
+    { 
+      icon: BookOpen, 
+      label: "CGPA", 
+      value: userCGPA ? userCGPA.toFixed(2) : "--", 
+      color: "text-blue-400" 
+    },
+    { 
+      icon: FileText, 
+      label: "Total Credits", 
+      value: userCredits ? userCredits.toString() : "--", 
+      color: "text-purple-400" 
+    },
+    { 
+      icon: Calendar, 
+      label: "Courses Enrolled", 
+      value: userCourses.length > 0 ? userCourses.length.toString() : "--", 
+      color: "text-cyan-400" 
+    },
   ]
 
   return (
@@ -169,6 +190,18 @@ export default function Dashboard() {
               <p>{new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
               <span>•</span>
               <p>Reg No: {userRegNo}</p>
+              {userBranch && (
+                <>
+                  <span>•</span>
+                  <p>{userBranch}</p>
+                </>
+              )}
+              {userSemester && (
+                <>
+                  <span>•</span>
+                  <p>Sem {userSemester}</p>
+                </>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -203,21 +236,103 @@ export default function Dashboard() {
         </div>
 
         {/* Data Status Indicator */}
-        {!realTimeData && (
-          <div className="p-4 border border-amber-500/30 bg-amber-500/10 rounded-lg">
+        {(userCourses.length > 0 || userCGPA || userAttendance) && (
+          <div className="p-4 border border-green-500/30 bg-green-500/10 rounded-lg">
             <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-amber-500" />
-              <p className="text-amber-500">
-                Connected to VTOP. Click refresh button to fetch latest data.
+              <AlertCircle className="h-5 w-5 text-green-500" />
+              <p className="text-green-500">
+                ✅ VTOP data loaded successfully from your account
               </p>
             </div>
           </div>
         )}
 
-        {/* Main Content */}
-        {realTimeData ? (
+        {/* Main Content - Courses */}
+        {userCourses.length > 0 ? (
+          <div className="space-y-6">
+            <Card className="bg-card/50 border-border/60">
+              <CardHeader>
+                <CardTitle>Enrolled Courses</CardTitle>
+                <CardDescription>Your current semester courses from VTOP</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {userCourses.map((course: any, idx: number) => (
+                    <div key={idx} className="p-4 rounded-lg bg-secondary/30 border border-border/40">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-1">
+                            <h3 className="font-semibold text-lg">{course.courseName || 'Course'}</h3>
+                            {course.courseCode && (
+                              <Badge variant="secondary" className="font-mono">
+                                {course.courseCode}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-sm text-foreground/60">
+                            {course.faculty && (
+                              <span>👨‍🏫 {course.faculty}</span>
+                            )}
+                            {course.slot && (
+                              <span>🕐 Slot: {course.slot}</span>
+                            )}
+                            {course.courseType && (
+                              <Badge variant="outline">{course.courseType}</Badge>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          {course.credits && (
+                            <div className="mb-2">
+                              <span className="text-2xl font-bold text-primary">{course.credits}</span>
+                              <span className="text-sm text-foreground/60 ml-1">Credits</span>
+                            </div>
+                          )}
+                          {course.attendance !== undefined && (
+                            <div className={`text-sm font-semibold ${
+                              course.attendance >= 75 ? 'text-green-500' : 
+                              course.attendance >= 65 ? 'text-amber-500' : 
+                              'text-red-500'
+                            }`}>
+                              📊 {course.attendance}% Attendance
+                            </div>
+                          )}
+                          {course.grade && (
+                            <Badge variant="default" className="mt-1">
+                              Grade: {course.grade}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          !realTimeData && (
+            <div className="p-4 border border-amber-500/30 bg-amber-500/10 rounded-lg">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-amber-500" />
+                <p className="text-amber-500">
+                  Course data will be displayed here after successful VTOP authentication
+                </p>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* Fallback content for when no VTOP data is available */}
+        {!userCourses.length && !realTimeData && (
+          <div className="text-center py-12">
+            <p className="text-foreground/60">Your course data will appear here once VTOP authentication is complete</p>
+          </div>
+        )}
+
+        {/* Additional VTOP data sections if available */}
+        {realTimeData && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Real VTOP data sections */}
             <Card className="lg:col-span-2 bg-card/50 border-border/60">
               <CardHeader>
                 <CardTitle>Today's Schedule</CardTitle>
@@ -245,7 +360,6 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Real Announcements */}
             <Card className="bg-card/50 border-border/60">
               <CardHeader>
                 <CardTitle className="text-lg">Recent Announcements</CardTitle>
@@ -268,10 +382,6 @@ export default function Dashboard() {
                 )}
               </CardContent>
             </Card>
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <p className="text-foreground/60">Click the refresh button above to load your VTOP data</p>
           </div>
         )}
       </div>

@@ -10,6 +10,10 @@ export interface UserProfile {
   branch?: string
   semester?: string
   section?: string
+  cgpa?: number
+  credits?: number
+  attendance?: number
+  courses?: any[]
 }
 
 export interface VITAuthPayload {
@@ -54,6 +58,10 @@ export const authService = {
         branch: vitData.branch,
         semester: vitData.semester,
         section: vitData.section,
+        cgpa: vitData.cgpa,
+        credits: vitData.credits,
+        attendance: vitData.attendance,
+        courses: vitData.courses,
       })
 
       return userAccount
@@ -139,6 +147,10 @@ export const authService = {
       branch?: string
       semester?: string
       section?: string
+      cgpa?: number
+      credits?: number
+      attendance?: number
+      courses?: any[]
     }
   ) {
     try {
@@ -168,6 +180,10 @@ export const authService = {
           registrationNo: vitData?.registrationNo || "",
           branch: vitData?.branch || "",
           semester: vitData?.semester || "",
+          cgpa: vitData?.cgpa || 0,
+          credits: vitData?.credits || 0,
+          attendance: vitData?.attendance || 0,
+          courses: JSON.stringify(vitData?.courses || []),
         }
       )
 
