@@ -1,7 +1,8 @@
-// app/api/vtop-connection/route.ts - VTOP connection status and management
+// app/api/vtop-connection/route.ts - VTOP connection status with Appwrite
 import { NextRequest, NextResponse } from 'next/server'
-import { connectToDatabase, getCollection } from '@/lib/mongodb'
+import { createDocument, updateDocument, listDocuments } from '@/lib/appwriteDb'
 import { checkRateLimit } from '@/lib/security'
+import { COLLECTION_IDS } from '@/lib/vtopModels'
 
 /**
  * GET /api/vtop-connection
@@ -14,16 +15,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 })
     }
 
-    const connections = await getCollection('vtop_connections')
-    const connection = await connections.findOne({ userId })
+    const connections = await listDocuments(COLLECTION_IDS.VTOP_CONNECTIONS, [
+      `userId = "${userId}"`
+    ])
 
-    if (!connection) {
+    if (connections.documents.length === 0) {
       return NextResponse.json({
         success: true,
         connected: false,
         status: 'disconnected',
       })
     }
+
+    const connection = connections.documents[0]
 
     return NextResponse.json({
       success: true,
@@ -47,7 +51,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/vtop-connection
- * Initialize VTOP connection (call after successful popup login)
+ * Initialize VTOP connection
  */
 export async function POST(request: NextRequest) {
   try {
@@ -68,28 +72,34 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const connections = await getCollection('vtop_connections')
-    const result = await connections.updateOne(
-      { userId },
-      {
-        $set: {
-          userId,
-          registrationNo,
-          status: 'connected',
-          connectedAt: new Date(),
-          lastRefresh: new Date(),
-          nextRefresh: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          autoRefresh,
-          refreshInterval: 24 * 60 * 60 * 1000, // 24 hours
-          failureCount: 0,
-          metadata: {
-            sessionId: '',
-            csrfToken: '',
-          },
-        },
-      },
-      { upsert: true }
-    )
+    const now = new Date()
+    const nextRefresh = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+
+    const connections = await listDocuments(COLLECTION_IDS.VTOP_CONNECTIONS, [
+      `userId = "${userId}"`
+    ])
+
+    const connectionData = {
+      userId,
+      registrationNo,
+      status: 'connected',
+      connectedAt: now.toISOString(),
+      lastRefresh: now.toISOString(),
+      nextRefresh: nextRefresh.toISOString(),
+      autoRefresh,
+      refreshInterval: 24 * 60 * 60 * 1000,
+      failureCount: 0,
+      metadata: JSON.stringify({
+        sessionId: '',
+        csrfToken: '',
+      }),
+    }
+
+    if (connections.documents.length > 0) {
+      await updateDocument(COLLECTION_IDS.VTOP_CONNECTIONS, connections.documents[0].$id, connectionData)
+    } else {
+      await createDocument(COLLECTION_IDS.VTOP_CONNECTIONS, connectionData)
+    }
 
     console.log(`[VTOP-CONNECTION] Connection initialized for ${userId}`)
 
@@ -118,16 +128,16 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 })
     }
 
-    const connections = await getCollection('vtop_connections')
-    await connections.updateOne(
-      { userId },
-      {
-        $set: {
-          autoRefresh,
-          refreshInterval: refreshInterval || 24 * 60 * 60 * 1000,
-        },
-      }
-    )
+    const connections = await listDocuments(COLLECTION_IDS.VTOP_CONNECTIONS, [
+      `userId = "${userId}"`
+    ])
+
+    if (connections.documents.length > 0) {
+      await updateDocument(COLLECTION_IDS.VTOP_CONNECTIONS, connections.documents[0].$id, {
+        autoRefresh,
+        refreshInterval: refreshInterval || 24 * 60 * 60 * 1000,
+      })
+    }
 
     console.log(`[VTOP-CONNECTION] Settings updated for ${userId}`)
 
@@ -156,20 +166,27 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 })
     }
 
-    const connections = await getCollection('vtop_connections')
-    await connections.updateOne(
-      { userId },
-      {
-        $set: {
-          status: 'disconnected',
-          disconnectedAt: new Date(),
-        },
-      }
-    )
+    const connections = await listDocuments(COLLECTION_IDS.VTOP_CONNECTIONS, [
+      `userId = "${userId}"`
+    ])
 
-    // Also revoke sessions
-    const sessions = await getCollection('vtop_sessions')
-    await sessions.updateMany({ userId }, { $set: { status: 'revoked' } })
+    if (connections.documents.length > 0) {
+      await updateDocument(COLLECTION_IDS.VTOP_CONNECTIONS, connections.documents[0].$id, {
+        status: 'disconnected',
+        disconnectedAt: new Date().toISOString(),
+      })
+    }
+
+    // Revoke sessions
+    const sessions = await listDocuments(COLLECTION_IDS.VTOP_SESSIONS, [
+      `userId = "${userId}"`
+    ])
+
+    for (const session of sessions.documents) {
+      await updateDocument(COLLECTION_IDS.VTOP_SESSIONS, session.$id, {
+        status: 'revoked',
+      })
+    }
 
     console.log(`[VTOP-CONNECTION] Disconnected ${userId}`)
 
